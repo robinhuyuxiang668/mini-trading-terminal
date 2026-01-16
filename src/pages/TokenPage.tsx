@@ -3,9 +3,13 @@ import { Link, useParams } from "react-router-dom";
 import { useEffect, useState, Suspense } from "react";
 import { TokenChart, ChartDataPoint } from "@/components/TokenChart";
 import { TradingPanel } from "@/components/TradingPanel";
+import { FloatingInstantTradePanel } from "@/components/FloatingInstantTradePanel";
+import { useFloatingPanel } from "@/hooks/use-floating-panel";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EnhancedToken, PairFilterResult, PairRankingAttribute, RankingDirection } from "@codex-data/sdk/dist/sdk/generated/graphql";
+import { Zap } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 type TokenEvent = {
   id: string;
@@ -26,6 +30,9 @@ export default function TokenPage() {
   const [events, setEvents] = useState<TokenEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Floating panel state
+  const { isVisible, position, togglePanel, updatePosition } = useFloatingPanel();
 
   useEffect(() => {
     if (isNaN(networkIdNum) || !tokenId) {
@@ -150,7 +157,21 @@ export default function TokenPage() {
       <div className="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
           <Suspense fallback={<Card><CardHeader><CardTitle>Price Chart</CardTitle></CardHeader><CardContent><p>Loading chart...</p></CardContent></Card>}>
-            <TokenChart data={bars} title={`${tokenSymbol || 'Token'} Price Chart`} />
+            <div className="space-y-2">
+              <TokenChart data={bars} title={`${tokenSymbol || 'Token'} Price Chart`} />
+              {/* Toggle button for floating panel */}
+              <div className="flex justify-center">
+                <Button
+                  onClick={togglePanel}
+                  variant={isVisible ? "default" : "outline"}
+                  size="sm"
+                  className="gap-2"
+                >
+                  <Zap className="w-4 h-4" />
+                  {isVisible ? "Hide" : "Show"} Instant Trade Panel
+                </Button>
+              </div>
+            </div>
           </Suspense>
 
           <Card>
@@ -261,6 +282,27 @@ export default function TokenPage() {
           </Card>
         </div>
       </div>
+
+      {/* Floating Instant Trade Panel */}
+      {details && (
+        <FloatingInstantTradePanel
+          token={details}
+          isVisible={isVisible}
+          position={position}
+          onPositionChange={updatePosition}
+          onClose={togglePanel}
+          currentPrice={
+            pairs?.[0]?.price
+              ? parseFloat(pairs[0].price || "0")
+              : undefined
+          }
+          volume24h={
+            pairs?.[0]?.volumeUSD24
+              ? `$${parseFloat(pairs[0].volumeUSD24 || "0").toLocaleString()}`
+              : undefined
+          }
+        />
+      )}
     </main>
   );
 }
