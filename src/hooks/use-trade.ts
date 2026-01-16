@@ -2,53 +2,89 @@ import { useCallback } from "react";
 import { LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import { NATIVE_MINT } from "@solana/spl-token";
 import Decimal from "decimal.js";
-import Jupiter from "@/lib/jupiter";
-import { bn } from "@/lib/utils";
-import { VersionedTransaction } from "@solana/web3.js";
+import BN from "bn.js";
+import {
+  createRaydiumCPMMSwapTransaction,
+  getRaydiumCPMMPool,
+} from "@/lib/raydium";
+import { getCodexClient } from "@/lib/codex";
+import { createConnection } from "@/lib/solana";
 
 export const useTrade = (
   tokenAddress: string,
   tokenAtomicBalance: Decimal,
+  tokenDecimals: number = 9
 ) => {
   const createTransaction = useCallback(
-    async (params: { direction: "buy" | "sell", value: number, signer: PublicKey }) => {
+    async (params: {
+      direction: "buy" | "sell";
+      value: number;
+      signer: PublicKey;
+    }) => {
       const { direction, value, signer } = params;
 
-      let atomicAmount;
+      const connection = createConnection();
+      const codexClient = getCodexClient();
+
+      // Determine input and output mints
+      const inputMint =
+        direction === "buy" ? NATIVE_MINT : new PublicKey(tokenAddress);
+      const outputMint =
+        direction === "buy" ? new PublicKey(tokenAddress) : NATIVE_MINT;
+
+      // Calculate input amount in atomic units
+      let amountAtomic: BN;
       if (direction === "buy") {
-        atomicAmount = new Decimal(value).mul(LAMPORTS_PER_SOL);
+        // Buy: SOL -> Token
+        amountAtomic = new BN(value * LAMPORTS_PER_SOL);
       } else {
-        atomicAmount = tokenAtomicBalance.mul(value).div(100);
+        // Sell: Token -> SOL (percentage-based)
+        amountAtomic = new BN(
+          tokenAtomicBalance.mul(value).div(100).toFixed(0)
+        );
       }
 
-      // Get order from Jupiter
-      const data = await Jupiter.getOrder({
-        inputMint:
-          direction === "buy" ? NATIVE_MINT : new PublicKey(tokenAddress),
-        outputMint:
-          direction === "buy" ? new PublicKey(tokenAddress) : NATIVE_MINT,
-        amount: bn(atomicAmount),
+      // Get Raydium CPMM pool info from Codex API
+      const poolInfo = await getRaydiumCPMMPool(
+        connection,
+        codexClient,
+        tokenAddress
+      );
+
+      if (!poolInfo) {
+        throw new Error("No Raydium CPMM pool found for this token pair");
+      }
+
+      // Validate pool contains target token pair
+      const poolHasInput =
+        poolInfo.mintA.equals(inputMint) || poolInfo.mintB.equals(inputMint);
+      const poolHasOutput =
+        poolInfo.mintA.equals(outputMint) || poolInfo.mintB.equals(outputMint);
+
+      if (!poolHasInput || !poolHasOutput) {
+        throw new Error("Pool does not contain the requested token pair");
+      }
+
+      // Create Raydium CPMM swap transaction
+      const slippageBps = 50; // Default 0.5% slippage
+      const priorityFeeMicroLamports = 1000; // Default priority fee
+
+      const transaction = await createRaydiumCPMMSwapTransaction(
+        connection,
         signer,
-      });
-
-      if (data.error) {
-        throw new Error(data.error);
-      }
-
-      if (data.transaction === null) {
-        throw new Error("Invalid data from Jupiter.getOrder");
-      }
-
-      // Parse the transaction from base64
-      const transactionBuffer = Buffer.from(data.transaction, "base64");
-      const transaction = VersionedTransaction.deserialize(transactionBuffer);
-
+        poolInfo,
+        inputMint,
+        outputMint,
+        amountAtomic,
+        slippageBps,
+        priorityFeeMicroLamports
+      );
 
       return transaction;
     },
-    [tokenAddress, tokenAtomicBalance],
+    [tokenAddress, tokenAtomicBalance, tokenDecimals]
   );
-  
+
   return {
     createTransaction,
   };
